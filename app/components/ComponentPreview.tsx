@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { SandpackProvider, SandpackPreview } from '@codesandbox/sandpack-react';
+import LocaleSelector from './LocaleSelector';
 
 interface ComponentPreviewProps {
   componentCode: string;
@@ -9,6 +10,7 @@ interface ComponentPreviewProps {
 
 export default function ComponentPreview({ componentCode }: ComponentPreviewProps) {
   const [processedCode, setProcessedCode] = useState<string>('');
+  const [currentLocale, setCurrentLocale] = useState<string>('en');
 
   useEffect(() => {
     if (!componentCode.trim()) {
@@ -95,12 +97,14 @@ export default function App() {
       { label: 'Contact', href: '#contact' }
     ],
     children: 'Click me',
+    onClick: () => console.log('Button clicked!'),
     title: 'Demo Title',
     description: 'This is a demo description.',
     placeholder: 'Enter text here...',
     text: 'Demo text',
     name: 'Demo Name',
-    value: 'Demo Value'
+    value: 'Demo Value',
+    locale: '${currentLocale}'
   };
 
   try {
@@ -122,7 +126,13 @@ export default function App() {
   return (
     <div className="h-full flex flex-col">
       <div className="border-b border-gray-200 dark:border-gray-700 p-4 flex-shrink-0">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Live Preview</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Live Preview</h2>
+          <LocaleSelector 
+            currentLocale={currentLocale}
+            onLocaleChange={setCurrentLocale}
+          />
+        </div>
       </div>
       
       <div className="flex-1 min-h-0" style={{ height: '100%', width: '100%' }}>

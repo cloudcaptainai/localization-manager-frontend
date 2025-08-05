@@ -12,7 +12,10 @@ export default function Editor() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (input.trim()) {
-      sendMessage({ text: input });
+
+      sendMessage({ 
+        text: `${input}` 
+      });
       setInput('');
     }
   };
