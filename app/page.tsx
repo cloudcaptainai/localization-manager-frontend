@@ -12,7 +12,7 @@ export default function Home() {
     <div className="flex h-screen">
       <SideNav currentPage={currentPage} onPageChange={setCurrentPage} />
       
-      <main className="flex-1 ml-80">
+      <main className="flex-1 ml-64">
         {currentPage === 'editor' && <Editor />}
         {currentPage === 'localization' && <LocalizationTable />}
       </main>

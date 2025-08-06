@@ -52,7 +52,7 @@ export default function Editor() {
                 React Component Creator
               </h1>
               <p className="text-gray-600 dark:text-gray-400">
-                Describe the React component you want to create, and I&apos;ll build it for you with a live preview.
+                Describe the React component you want to create, and I&apos;ll build it for you with a live preview. (Beta - may take a tries to get a successful preview.)
               </p>
             </div>
             
