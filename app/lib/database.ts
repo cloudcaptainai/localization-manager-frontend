@@ -1,7 +1,6 @@
-import * as duckdb from '@duckdb/duckdb-wasm';
+import initSqlJs, { Database } from 'sql.js';
 
-let db: duckdb.AsyncDuckDB | null = null;
-let connection: duckdb.AsyncDuckDBConnection | null = null;
+let db: Database | null = null;
 
 export interface LocalizationEntry {
   id: string;
@@ -62,69 +61,53 @@ export async function initializeDatabase(): Promise<void> {
   if (db) return; // Already initialized
 
   try {
-    // Initialize DuckDB with local files
-    const MANUAL_BUNDLES: duckdb.DuckDBBundles = {
-      mvp: {
-        mainModule: '/duckdb-mvp.wasm',
-        mainWorker: '/duckdb-browser-mvp.worker.js',
-      },
-      eh: {
-        mainModule: '/duckdb-eh.wasm',
-        mainWorker: '/duckdb-browser-eh.worker.js',
-      },
-    };
+    // Initialize SQL.js
+    const SQL = await initSqlJs({
+      locateFile: (file: string) => `https://sql.js.org/dist/${file}`
+    });
 
-    const bundle = await duckdb.selectBundle(MANUAL_BUNDLES);
-    
-    // Create worker with error handling
-    let worker: Worker;
-    try {
-      worker = new Worker(bundle.mainWorker!);
-    } catch (workerError) {
-      console.error('Failed to create worker:', workerError);
-      throw new Error(`Failed to load DuckDB worker. Please ensure the application is served over HTTPS or from localhost.`);
-    }
-    
-    const logger = new duckdb.ConsoleLogger();
-    
-    db = new duckdb.AsyncDuckDB(logger, worker);
-    await db.instantiate(bundle.mainModule);
-    
-    connection = await db.connect();
+    // Try to load existing database from localStorage
+    const savedDb = localStorage.getItem('localizations_db');
+    if (savedDb) {
+      const uint8Array = new Uint8Array(savedDb.split(',').map(Number));
+      db = new SQL.Database(uint8Array);
+      console.log('Loaded existing database from localStorage');
+    } else {
+      // Create new database
+      db = new SQL.Database();
+      
+      // Create the localization table
+      db.run(`
+        CREATE TABLE localizations (
+          id TEXT PRIMARY KEY,
+          key TEXT UNIQUE NOT NULL,
+          en TEXT DEFAULT '',
+          es TEXT DEFAULT '',
+          fr TEXT DEFAULT '',
+          de TEXT DEFAULT '',
+          ja TEXT DEFAULT '',
+          zh TEXT DEFAULT '',
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
 
-    // Create the localization table
-    await connection.query(`
-      CREATE TABLE IF NOT EXISTS localizations (
-        id VARCHAR PRIMARY KEY,
-        key VARCHAR UNIQUE NOT NULL,
-        en TEXT DEFAULT '',
-        es TEXT DEFAULT '',
-        fr TEXT DEFAULT '',
-        de TEXT DEFAULT '',
-        ja TEXT DEFAULT '',
-        zh TEXT DEFAULT '',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // Insert initial data if table is empty
-    const countResult = await connection.query('SELECT COUNT(*) as count FROM localizations');
-    const count = countResult.toArray()[0].count;
-    
-    if (count === 0) {
+      // Insert initial data
       await seedInitialData();
+      console.log('Created new database with initial data');
     }
 
-    console.log('DuckDB initialized successfully');
+    // Save database to localStorage
+    saveDatabaseToLocalStorage();
+    
   } catch (error) {
-    console.error('Failed to initialize DuckDB:', error);
+    console.error('Failed to initialize SQLite database:', error);
     throw error;
   }
 }
 
 async function seedInitialData(): Promise<void> {
-  if (!connection) throw new Error('Database not initialized');
+  if (!db) throw new Error('Database not initialized');
 
   const initialData = [
     {
@@ -180,24 +163,49 @@ async function seedInitialData(): Promise<void> {
   ];
 
   for (const entry of initialData) {
-    await connection.query(`
+    db.run(`
       INSERT INTO localizations (id, key, en, es, fr, de, ja, zh)
-      VALUES ('${entry.id}', '${entry.key}', '${entry.en}', '${entry.es}', '${entry.fr}', '${entry.de}', '${entry.ja}', '${entry.zh}')
-    `);
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [entry.id, entry.key, entry.en, entry.es, entry.fr, entry.de, entry.ja, entry.zh]);
+  }
+}
+
+function saveDatabaseToLocalStorage(): void {
+  if (!db) return;
+  
+  try {
+    const data = db.export();
+    const array = Array.from(data);
+    localStorage.setItem('localizations_db', array.toString());
+  } catch (error) {
+    console.error('Failed to save database to localStorage:', error);
   }
 }
 
 export async function getAllLocalizations(): Promise<LocalizationEntry[]> {
-  if (!connection) {
+  if (!db) {
     await initializeDatabase();
   }
   
-  const result = await connection!.query('SELECT * FROM localizations ORDER BY key');
-  return result.toArray() as LocalizationEntry[];
+  const result = db!.exec('SELECT * FROM localizations ORDER BY key');
+  if (result.length === 0) return [];
+  
+  return result[0].values.map(row => ({
+    id: row[0] as string,
+    key: row[1] as string,
+    en: row[2] as string,
+    es: row[3] as string,
+    fr: row[4] as string,
+    de: row[5] as string,
+    ja: row[6] as string,
+    zh: row[7] as string,
+    created_at: row[8] as string,
+    updated_at: row[9] as string
+  }));
 }
 
 export async function updateLocalization(id: string, field: string, value: string): Promise<void> {
-  if (!connection) {
+  if (!db) {
     await initializeDatabase();
   }
 
@@ -207,49 +215,39 @@ export async function updateLocalization(id: string, field: string, value: strin
     throw new Error(`Invalid field: ${field}`);
   }
 
-  // Escape single quotes in value
-  const escapedValue = value.replace(/'/g, "''");
-  
-  await connection!.query(`
+  db!.run(`
     UPDATE localizations 
-    SET ${field} = '${escapedValue}', updated_at = CURRENT_TIMESTAMP 
-    WHERE id = '${id}'
-  `);
+    SET ${field} = ?, updated_at = datetime('now')
+    WHERE id = ?
+  `, [value, id]);
+  
+  saveDatabaseToLocalStorage();
 }
 
 export async function createLocalization(entry: Omit<LocalizationEntry, 'created_at' | 'updated_at'>): Promise<void> {
-  if (!connection) {
+  if (!db) {
     await initializeDatabase();
   }
 
-  // Escape single quotes in all string values
-  const escapedEntry = {
-    id: entry.id,
-    key: entry.key.replace(/'/g, "''"),
-    en: entry.en.replace(/'/g, "''"),
-    es: entry.es.replace(/'/g, "''"),
-    fr: entry.fr.replace(/'/g, "''"),
-    de: entry.de.replace(/'/g, "''"),
-    ja: entry.ja.replace(/'/g, "''"),
-    zh: entry.zh.replace(/'/g, "''")
-  };
-
-  await connection!.query(`
+  db!.run(`
     INSERT INTO localizations (id, key, en, es, fr, de, ja, zh)
-    VALUES ('${escapedEntry.id}', '${escapedEntry.key}', '${escapedEntry.en}', '${escapedEntry.es}', '${escapedEntry.fr}', '${escapedEntry.de}', '${escapedEntry.ja}', '${escapedEntry.zh}')
-  `);
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `, [entry.id, entry.key, entry.en, entry.es, entry.fr, entry.de, entry.ja, entry.zh]);
+  
+  saveDatabaseToLocalStorage();
 }
 
 export async function deleteLocalization(id: string): Promise<void> {
-  if (!connection) {
+  if (!db) {
     await initializeDatabase();
   }
 
-  await connection!.query(`DELETE FROM localizations WHERE id = '${id}'`);
+  db!.run('DELETE FROM localizations WHERE id = ?', [id]);
+  saveDatabaseToLocalStorage();
 }
 
 export async function getTranslations(locale: string): Promise<Record<string, string>> {
-  if (!connection) {
+  if (!db) {
     await initializeDatabase();
   }
 
@@ -259,22 +257,18 @@ export async function getTranslations(locale: string): Promise<Record<string, st
     throw new Error(`Invalid locale: ${locale}`);
   }
 
-  const result = await connection!.query(`SELECT key, ${locale} as translation FROM localizations`);
-  const rows = result.toArray();
+  const result = db!.exec(`SELECT key, ${locale} as translation FROM localizations`);
+  if (result.length === 0) return {};
   
-  return rows.reduce((acc, row) => {
-    acc[row.key] = row.translation || '';
+  return result[0].values.reduce((acc, row) => {
+    acc[row[0] as string] = row[1] as string || '';
     return acc;
   }, {} as Record<string, string>);
 }
 
 export function closeDatabase(): void {
-  if (connection) {
-    connection.close();
-    connection = null;
-  }
   if (db) {
-    db.terminate();
+    db.close();
     db = null;
   }
 } 
