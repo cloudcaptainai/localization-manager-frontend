@@ -1,71 +1,13 @@
 'use client';
 
-import { useState } from 'react';
-
-interface LocalizationEntry {
-  id: string;
-  key: string;
-  en: string;
-  es: string;
-  fr: string;
-  de: string;
-  ja: string;
-  zh: string;
-}
+import { useState, useEffect } from 'react';
+import { LocalizationDB, LocalizationEntry } from '../lib/database';
 
 export default function LocalizationTable() {
-  const [entries, setEntries] = useState<LocalizationEntry[]>([
-    {
-      id: '1',
-      key: 'welcome.title',
-      en: 'Welcome to our app',
-      es: 'Bienvenido a nuestra aplicación',
-      fr: 'Bienvenue dans notre application',
-      de: 'Willkommen in unserer App',
-      ja: '私たちのアプリへようこそ',
-      zh: '欢迎使用我们的应用'
-    },
-    {
-      id: '2',
-      key: 'button.submit',
-      en: 'Submit',
-      es: 'Enviar',
-      fr: 'Soumettre',
-      de: 'Absenden',
-      ja: '送信',
-      zh: '提交'
-    },
-    {
-      id: '3',
-      key: 'error.validation',
-      en: 'Please check your input',
-      es: 'Por favor verifica tu entrada',
-      fr: 'Veuillez vérifier votre saisie',
-      de: 'Bitte überprüfen Sie Ihre Eingabe',
-      ja: '入力内容を確認してください',
-      zh: '请检查您的输入'
-    },
-    {
-      id: '4',
-      key: 'navigation.home',
-      en: 'Home',
-      es: 'Inicio',
-      fr: 'Accueil',
-      de: 'Startseite',
-      ja: 'ホーム',
-      zh: '首页'
-    },
-    {
-      id: '5',
-      key: 'form.email',
-      en: 'Email Address',
-      es: 'Dirección de correo',
-      fr: 'Adresse e-mail',
-      de: 'E-Mail-Adresse',
-      ja: 'メールアドレス',
-      zh: '电子邮件地址'
-    }
-  ]);
+  const [entries, setEntries] = useState<LocalizationEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const db = LocalizationDB.getInstance();
 
   const [editingCell, setEditingCell] = useState<{ entryId: string; field: string } | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -75,17 +17,35 @@ export default function LocalizationTable() {
     setEditValue(currentValue);
   };
 
-  const handleSave = () => {
+  const loadEntries = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await db.getAll();
+      setEntries(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load entries');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSave = async () => {
     if (!editingCell) return;
     
-    setEntries(prev => prev.map(entry => 
-      entry.id === editingCell.entryId 
-        ? { ...entry, [editingCell.field]: editValue }
-        : entry
-    ));
-    
-    setEditingCell(null);
-    setEditValue('');
+    try {
+      await db.update(editingCell.entryId, editingCell.field, editValue);
+      setEntries(prev => prev.map(entry => 
+        entry.id === editingCell.entryId 
+          ? { ...entry, [editingCell.field]: editValue }
+          : entry
+      ));
+      setEditingCell(null);
+      setEditValue('');
+    } catch (error) {
+      console.error('Failed to save:', error);
+      setError(error instanceof Error ? error.message : 'Failed to save');
+    }
   };
 
   const handleCancel = () => {
@@ -101,6 +61,43 @@ export default function LocalizationTable() {
     }
   };
 
+  const generateId = () => Date.now().toString() + Math.random().toString(36).substr(2, 9);
+
+  const handleAddEntry = async () => {
+    const newEntry: Omit<LocalizationEntry, 'created_at' | 'updated_at'> = {
+      id: generateId(),
+      key: 'new.key',
+      en: '',
+      es: '',
+      fr: '',
+      de: '',
+      ja: '',
+      zh: ''
+    };
+
+    try {
+      await db.create(newEntry);
+      setEntries(prev => [...prev, { ...newEntry, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }].sort((a, b) => a.key.localeCompare(b.key)));
+    } catch (error) {
+      console.error('Failed to create entry:', error);
+      setError(error instanceof Error ? error.message : 'Failed to create entry');
+    }
+  };
+
+  const handleDeleteEntry = async (id: string) => {
+    try {
+      await db.delete(id);
+      setEntries(prev => prev.filter(entry => entry.id !== id));
+    } catch (error) {
+      console.error('Failed to delete entry:', error);
+      setError(error instanceof Error ? error.message : 'Failed to delete entry');
+    }
+  };
+
+  useEffect(() => {
+    loadEntries();
+  }, []);
+
   const languages = [
     { code: 'en', name: 'English', flag: '🇺🇸' },
     { code: 'es', name: 'Español', flag: '🇪🇸' },
@@ -109,6 +106,33 @@ export default function LocalizationTable() {
     { code: 'ja', name: '日本語', flag: '🇯🇵' },
     { code: 'zh', name: '中文', flag: '🇨🇳' },
   ];
+
+  if (loading) {
+    return (
+      <div className="h-screen bg-white dark:bg-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600 dark:text-gray-400">Loading localizations...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="h-screen bg-white dark:bg-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-red-500 mb-4">
+            <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.5 0L4.268 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+          </div>
+          <p className="text-red-600 dark:text-red-400 font-medium mb-2">Failed to load localizations</p>
+          <p className="text-gray-600 dark:text-gray-400 text-sm">{error}</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen bg-white dark:bg-gray-900 flex flex-col">
@@ -119,7 +143,10 @@ export default function LocalizationTable() {
             <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">Localization</h1>
             <p className="text-gray-600 dark:text-gray-400 mt-1">Manage translations across languages</p>
           </div>
-          <button className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
+          <button 
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            onClick={handleAddEntry}
+          >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
             </svg>
@@ -223,7 +250,7 @@ export default function LocalizationTable() {
                       <div className="flex gap-2">
                         <button 
                           className="p-1 text-gray-400 hover:text-red-600 dark:text-gray-500 dark:hover:text-red-400 transition-colors"
-                          onClick={() => setEntries(prev => prev.filter(e => e.id !== entry.id))}
+                          onClick={() => handleDeleteEntry(entry.id)}
                         >
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
